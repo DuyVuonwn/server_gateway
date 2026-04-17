@@ -28,6 +28,17 @@ const timelineDateInput = document.getElementById('timeline-date');
 const mapViewContainer = document.getElementById('map-view-container');
 const videoRecordingBadge = document.getElementById('video-recording-badge');
 
+// Event Details DOM
+const eventDetailEmpty = document.getElementById('event-detail-empty');
+const eventDetailInfo = document.getElementById('event-detail-info');
+const eventDetailImg = document.getElementById('event-detail-img');
+const eventDetailNoImg = document.getElementById('event-detail-no-img');
+const eventDetailIcon = document.getElementById('event-detail-icon');
+const eventDetailTitle = document.getElementById('event-detail-title');
+const eventDetailDevice = document.getElementById('event-detail-device');
+const eventDetailTime = document.getElementById('event-detail-time');
+const eventDetailDesc = document.getElementById('event-detail-desc');
+
 const HANOI_CENTER = [21.0285, 105.8542];
 const HANOI_DEFAULT_ZOOM = 16;
 const OFFLINE_MAP_SOURCE = "pmtiles://map.pmtiles";
@@ -44,6 +55,7 @@ const knownGlobalEventKeys = new Set();
 const eventFilterState = {
   selectedDate: getLocalDateInputValue(new Date())
 };
+let faceRecognitionEnabled = false;
 let cameraMap = null;
 let cameraMarkers = [];
 // WebRTC playback sessions mapped by deviceId (or custom key)
@@ -607,6 +619,15 @@ async function fetchHistoricalEvents() {
 function shouldRenderGlobalEvent(data) {
   if (data.type !== 'gateway-data') return false;
   const gatewayType = data.data?.type;
+
+  // Filter by face detection mode
+  if (faceRecognitionEnabled) {
+    // Only show face detection related events when enabled
+    const evtName = (data.data?.eventName || '').toLowerCase();
+    const isFaceRecEvent = evtName.includes('face') || evtName.includes('recognition') || evtName.includes('identify');
+    if (!isFaceRecEvent) return false;
+  }
+
   return ['device-event', 'device-snapshot', 'sos-alarm', 'event-message'].includes(gatewayType);
 }
 
@@ -918,42 +939,42 @@ function renderCameraList() {
       body.appendChild(card);
     });
 
-  const attachDrop = (el) => {
-    el.ondragover = (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; row.classList.add('ring-2', 'ring-primary', 'ring-inset'); };
-    el.ondragleave = (e) => { e.stopPropagation(); row.classList.remove('ring-2', 'ring-primary', 'ring-inset'); };
-    el.ondrop = (e) => {
+    const attachDrop = (el) => {
+      el.ondragover = (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; row.classList.add('ring-2', 'ring-primary', 'ring-inset'); };
+      el.ondragleave = (e) => { e.stopPropagation(); row.classList.remove('ring-2', 'ring-primary', 'ring-inset'); };
+      el.ondrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        row.classList.remove('ring-2', 'ring-primary', 'ring-inset');
+        const deviceId = e.dataTransfer.getData('text/plain');
+        if (!deviceId) return;
+        removeDeviceFromGroups(deviceId);
+        const target = cameraGroups.find(g => g.id === group.id) || group;
+        if (!target.deviceIds.includes(deviceId)) target.deviceIds.push(deviceId);
+        saveGroupsToStorage();
+        renderCameraList();
+        showToast(`Added ${deviceId} to ${group.name}`);
+      };
+    };
+    attachDrop(row);
+    attachDrop(header);
+    attachDrop(body);
+
+    header.oncontextmenu = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      row.classList.remove('ring-2', 'ring-primary', 'ring-inset');
-      const deviceId = e.dataTransfer.getData('text/plain');
-      if (!deviceId) return;
-      removeDeviceFromGroups(deviceId);
-      const target = cameraGroups.find(g => g.id === group.id) || group;
-      if (!target.deviceIds.includes(deviceId)) target.deviceIds.push(deviceId);
-      saveGroupsToStorage();
-      renderCameraList();
-      showToast(`Added ${deviceId} to ${group.name}`);
+      if (!groupContextMenu) return;
+      groupContextMenu.dataset.groupId = group.id;
+      groupContextMenu.style.left = `${e.clientX}px`;
+      groupContextMenu.style.top = `${e.clientY}px`;
+      groupContextMenu.classList.remove('hidden');
+      cameraContextMenu?.classList.add('hidden');
     };
-  };
-  attachDrop(row);
-  attachDrop(header);
-  attachDrop(body);
 
-  header.oncontextmenu = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!groupContextMenu) return;
-    groupContextMenu.dataset.groupId = group.id;
-    groupContextMenu.style.left = `${e.clientX}px`;
-    groupContextMenu.style.top = `${e.clientY}px`;
-    groupContextMenu.classList.remove('hidden');
-    cameraContextMenu?.classList.add('hidden');
-  };
-
-  row.appendChild(header);
-  row.appendChild(body);
-  cameraListEl.appendChild(row);
-});
+    row.appendChild(header);
+    row.appendChild(body);
+    cameraListEl.appendChild(row);
+  });
 
   // Allow drop on empty space (ungroup)
   cameraListEl.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
@@ -1103,15 +1124,15 @@ function updateGroupGridView() {
     showToast('Group is empty', true);
     return;
   }
-  
+
   const totalCams = group.deviceIds.length;
   const isLarge = totalCams > 4;
   const pageSize = isLarge ? 9 : 4;
   const totalPages = Math.ceil(totalCams / pageSize);
-  
+
   if (currentGridPage >= totalPages) currentGridPage = totalPages - 1;
   if (currentGridPage < 0) currentGridPage = 0;
-  
+
   const gridPaginationOverlay = document.getElementById('grid-pagination-overlay');
   const gridPageIndicator = document.getElementById('grid-page-indicator');
   const btnGridPrev = document.getElementById('btn-grid-prev');
@@ -1122,7 +1143,7 @@ function updateGroupGridView() {
     gridPageIndicator.textContent = `PAGE ${currentGridPage + 1}/${totalPages}`;
     btnGridPrev.disabled = currentGridPage === 0;
     btnGridNext.disabled = currentGridPage === totalPages - 1;
-    
+
     btnGridPrev.onclick = () => { if (currentGridPage > 0) { currentGridPage--; updateGroupGridView(); } };
     btnGridNext.onclick = () => { if (currentGridPage < totalPages - 1) { currentGridPage++; updateGroupGridView(); } };
   } else if (gridPaginationOverlay) {
@@ -1147,7 +1168,7 @@ function updateGroupGridView() {
               talkStream: `talk_group_${group.id}`,
               mirrorToTalk: true
             })
-          }).catch(() => {});
+          }).catch(() => { });
         }, 1500); // Wait 1.5s for MediaMTX to spin up the AAC transcoder
       })
       .catch((err) => {
@@ -1164,15 +1185,15 @@ function updateGroupGridView() {
             talkStream: null, // Prevent 404 crash in ffmpeg
             mirrorToTalk: true
           })
-        }).catch(() => {});
+        }).catch(() => { });
       });
 
     group.deviceIds.forEach(did => {
       const cam = cameras.find(c => c.deviceId === did);
-      if (cam?.streamUrl) ensureHiddenWhepSession(did, cam.streamUrl).catch(() => {});
+      if (cam?.streamUrl) ensureHiddenWhepSession(did, cam.streamUrl).catch(() => { });
     });
   }
-  
+
   const startIdx = currentGridPage * pageSize;
   const pageDeviceIds = group.deviceIds.slice(startIdx, startIdx + pageSize);
 
@@ -1196,9 +1217,9 @@ function updateGroupGridView() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId: did, serviceId: 'startLiveAction', paras: { rtmpUrl } })
-    }).catch(()=>{});
+    }).catch(() => { });
   });
-  
+
   showToast(`Viewing Group: ${group.name}${totalPages > 1 ? ` (Page ${currentGridPage + 1})` : ''}`);
 }
 
@@ -1299,18 +1320,18 @@ renameGroupModal?.addEventListener('click', (e) => {
 });
 
 document.getElementById('btn-save-rename-group').onclick = () => {
-    if (!currentRenameGroupId) return;
-    const newName = inputRenameGroup.value.trim();
-    if (!newName) { showToast('Please enter a valid group name', true); return; }
-    
-    const groupIdx = cameraGroups.findIndex(g => g.id === currentRenameGroupId);
-    if (groupIdx !== -1) {
-      cameraGroups[groupIdx].name = newName;
-      saveGroupsToStorage();
-      renderCameraList();
-      showToast(`Group renamed to "${newName}"`);
-    }
-    hideRenameGroupModal();
+  if (!currentRenameGroupId) return;
+  const newName = inputRenameGroup.value.trim();
+  if (!newName) { showToast('Please enter a valid group name', true); return; }
+
+  const groupIdx = cameraGroups.findIndex(g => g.id === currentRenameGroupId);
+  if (groupIdx !== -1) {
+    cameraGroups[groupIdx].name = newName;
+    saveGroupsToStorage();
+    renderCameraList();
+    showToast(`Group renamed to "${newName}"`);
+  }
+  hideRenameGroupModal();
 };
 
 // Delete Modal
@@ -1333,15 +1354,15 @@ deleteGroupModal?.addEventListener('click', (e) => {
 });
 
 document.getElementById('btn-confirm-delete-group').onclick = () => {
-    if (!currentDeleteGroupId) return;
-    const groupIdx = cameraGroups.findIndex(g => g.id === currentDeleteGroupId);
-    if (groupIdx !== -1) {
-      cameraGroups.splice(groupIdx, 1);
-      saveGroupsToStorage();
-      renderCameraList();
-      showToast(`Group deleted`);
-    }
-    hideDeleteGroupModal();
+  if (!currentDeleteGroupId) return;
+  const groupIdx = cameraGroups.findIndex(g => g.id === currentDeleteGroupId);
+  if (groupIdx !== -1) {
+    cameraGroups.splice(groupIdx, 1);
+    saveGroupsToStorage();
+    renderCameraList();
+    showToast(`Group deleted`);
+  }
+  hideDeleteGroupModal();
 };
 
 // Context menu on camera panel
@@ -1459,7 +1480,7 @@ async function sendCommand(serviceId, customParas = null) {
           if (serviceId === 'startLiveAction' && cam.streamUrl) {
             ensureHiddenWhepSession(deviceId, cam.streamUrl)
               .then(sess => { if (sess?.stream) video.srcObject = sess.stream; })
-              .catch(() => {});
+              .catch(() => { });
           }
           if (serviceId === 'stopLiveAction') {
             video.classList.add('hidden');
@@ -1695,6 +1716,80 @@ function renderEventFeed(data) {
   renderEventItem(data, false);
 }
 
+function showEventDetails(data) {
+  if (!data || !data.data) return;
+
+  const payload = data.data;
+  const gType = payload.type;
+  const devId = payload.deviceId;
+  const snapPath = payload.snapshotPath;
+  const evtTimeText = getGatewayEventTimestamp(data);
+  const evtName = payload.eventName || gType;
+  const camObj = cameras.find(c => c.deviceId === devId);
+  const displayName = camObj ? camObj.name : devId;
+
+  // Update UI
+  eventDetailEmpty.classList.add('hidden');
+  eventDetailInfo.classList.remove('hidden');
+
+  // Set image
+  if (snapPath) {
+    eventDetailImg.src = snapPath;
+    eventDetailImg.classList.remove('hidden');
+    eventDetailNoImg.classList.add('hidden');
+  } else {
+    eventDetailImg.src = '';
+    eventDetailImg.classList.add('hidden');
+    eventDetailNoImg.classList.remove('hidden');
+  }
+
+  // Set icon and title based on type
+  let icon = 'event';
+  let colorClass = 'text-primary';
+  if (gType === 'sos-alarm') {
+    icon = 'warning';
+    colorClass = 'text-error';
+  } else if (gType === 'event-message') {
+    icon = 'notification_important';
+    colorClass = 'text-amber-700';
+  } else if (gType === 'device-snapshot') {
+    icon = 'photo_camera';
+    colorClass = 'text-primary';
+  }
+
+  eventDetailIcon.textContent = icon;
+  eventDetailIcon.className = `material-symbols-outlined text-lg ${colorClass}`;
+  eventDetailTitle.textContent = evtName;
+  eventDetailTitle.className = `text-xs font-extrabold truncate ${colorClass}`;
+
+  eventDetailDevice.textContent = `${displayName} (${devId})`;
+  eventDetailTime.textContent = evtTimeText;
+
+  // Build description
+  let description = `Type: ${gType}`;
+  if (payload.paras) {
+    const paras = payload.paras;
+    const items = [];
+    if (paras.latitude && paras.longitude) {
+      items.push(`Location: ${paras.latitude}, ${paras.longitude}`);
+    }
+    if (paras.speed) items.push(`Speed: ${paras.speed} km/h`);
+    if (paras.battery) items.push(`Battery: ${paras.battery}%`);
+    if (items.length > 0) description += `\n${items.join('\n')}`;
+  }
+  eventDetailDesc.textContent = description;
+  eventDetailDesc.style.whiteSpace = 'pre-line';
+
+  // Highlight selected card
+  document.querySelectorAll('#event-feed-list > div').forEach(card => {
+    card.classList.remove('ring-2', 'ring-primary', 'shadow-lg');
+  });
+  const selectedCard = Array.from(document.querySelectorAll('#event-feed-list > div')).find(card => card.dataset.eventKey === buildGlobalEventKey(data));
+  if (selectedCard) {
+    selectedCard.classList.add('ring-2', 'ring-primary', 'shadow-lg');
+  }
+}
+
 function renderEventItem(data, isHistorical) {
   let title = "System Notification";
   let desc = "";
@@ -1769,7 +1864,12 @@ function renderEventItem(data, isHistorical) {
         ? 'text-error'
         : (isEventMessageSnapshot ? 'text-amber-700' : colorClass);
       const el = document.createElement('div');
-      el.className = `flex flex-col gap-2 p-3 rounded-xl border hover:shadow-md transition-all ${previewBgClass}`;
+      el.className = `flex flex-col gap-2 p-3 rounded-xl border hover:shadow-md transition-all cursor-pointer ${previewBgClass}`;
+      el.dataset.eventKey = buildGlobalEventKey(data);
+      el.onclick = (e) => {
+        if (e.target.tagName === 'IMG') return; // Don't trigger detail if clicking image (it opens in new tab)
+        showEventDetails(data);
+      };
       el.innerHTML = `
               <div class="flex gap-3 items-start w-full">
                   <div class="w-[72px] h-[54px] bg-black/5 border border-surface-container-high rounded-lg overflow-hidden shrink-0 flex items-center justify-center relative">
@@ -1797,7 +1897,9 @@ function renderEventItem(data, isHistorical) {
   }
 
   const el = document.createElement('div');
-  el.className = `flex gap-4 p-3 rounded-xl border hover:shadow-md transition-all ${bgClass}`;
+  el.className = `flex gap-4 p-3 rounded-xl border hover:shadow-md transition-all cursor-pointer ${bgClass}`;
+  el.dataset.eventKey = buildGlobalEventKey(data);
+  el.onclick = () => showEventDetails(data);
   el.innerHTML = `
       <div class="flex-1 min-w-0">
           <div class="flex justify-between items-center">
@@ -2038,3 +2140,13 @@ fetchCameras().then(() => {
   fetchHistoricalEvents();
 });
 initSSE();
+
+// Face Recognition Toggle
+const faceRecToggle = document.getElementById('face-rec-toggle');
+if (faceRecToggle) {
+  faceRecToggle.addEventListener('change', (e) => {
+    faceRecognitionEnabled = e.target.checked;
+    rerenderGlobalEventViews();
+    showToast(faceRecognitionEnabled ? 'Face Detect mode enabled' : 'Face Detect mode disabled');
+  });
+}
