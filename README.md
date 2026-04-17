@@ -85,7 +85,3 @@ npm start
 
 ---
 
-## 5. Cấu trúc dự án
-- `gateway/`: Xử lý giao tiếp thiết bị (MQTT), Audio Mixing (FFmpeg), và MediaMTX.
-- `vms_server/`: Dashboard quản lý, xử lý Logic Sync bằng C++ Addon hiệu năng cao.
-- `.gitignore`: Đã được cấu hình để loại bỏ tệp rác và bảo mật dữ liệu.
