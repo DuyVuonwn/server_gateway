@@ -70,13 +70,11 @@ cp .env.example .env
 ## 4. Cách khởi chạy (Running)
 
 ### Khởi chạy Gateway
+Chỉ cần chạy server Gateway, tệp thực thi `mediamtx` (nếu đã đặt đúng chỗ) sẽ được tự động khởi chạy:
+
 ```bash
 cd gateway
-# Chạy MediaMTX (ở một terminal riêng)
-./mediamtx
-
-# Chạy server Gateway
-npm start  # Hoặc "npm run dev" nếu muốn dùng nodemon
+npm start  # Hoặc "npm run dev"
 ```
 
 ### Khởi chạy VMS Server
